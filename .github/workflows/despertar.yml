@@ -1,0 +1,41 @@
+name: Despertar programador
+
+# Varios intentos de noche: el reloj de GitHub se retrasa o se salta disparos.
+# El primero que arranque espera hasta las 06:25 de Madrid y enciende el programador.
+on:
+  schedule:
+    - cron: "0 23 * * *"
+    - cron: "30 0 * * *"
+    - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
+    - cron: "45 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: despertar
+  cancel-in-progress: false
+
+jobs:
+  despertar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 400
+    steps:
+      - name: Esperar a las 06:25 de Madrid y encender
+        env:
+          GH_TOKEN: ${{ secrets.PROGRAMADOR_TOKEN }}
+          REPO: omarnegociomlm-sketch/ig-programador
+        run: |
+          objetivo=$(TZ=Europe/Madrid date -d "today 06:25" +%s)
+          ahora=$(date +%s)
+          if [ "$ahora" -gt $((objetivo + 3600*14)) ]; then
+            objetivo=$(TZ=Europe/Madrid date -d "tomorrow 06:25" +%s)
+          fi
+          espera=$((objetivo - ahora))
+          if [ "$espera" -gt 0 ]; then echo "Espero $espera s"; sleep "$espera"; fi
+          # Si ya se encendió hoy (otro intento), no repetir.
+          hoy=$(TZ=Europe/Madrid date -d "today 06:00" -u +%Y-%m-%dT%H:%M:%SZ)
+          ya=$(gh run list -R "$REPO" -w publicar.yml -L 20 --json createdAt,event \
+               -q "[.[] | select(.event==\"workflow_dispatch\" and .createdAt >= \"$hoy\")] | length")
+          if [ "$ya" -gt 0 ]; then echo "Ya encendido hoy."; exit 0; fi
+          gh workflow run publicar.yml -R "$REPO"
+          echo "Programador encendido."
