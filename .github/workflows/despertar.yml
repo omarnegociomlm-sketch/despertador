@@ -10,6 +10,10 @@ on:
     - cron: "0 3 * * *"
     - cron: "45 3 * * *"
   workflow_dispatch:
+    inputs:
+      prueba:
+        description: "solo comprobar la llave (no enciende nada)"
+        default: "no"
 
 concurrency:
   group: despertar
@@ -25,6 +29,12 @@ jobs:
           GH_TOKEN: ${{ secrets.PROGRAMADOR_TOKEN }}
           REPO: omarnegociomlm-sketch/ig-programador
         run: |
+          if [ "${{ github.event.inputs.prueba }}" = "si" ]; then
+            gh run list -R "$REPO" -L 1 >/dev/null && echo "LECTURA OK"
+            r=$(gh api -X POST "repos/$REPO/actions/workflows/publicar.yml/dispatches" -f ref=rama-que-no-existe 2>&1 || true)
+            echo "$r" | grep -q "No ref found" && echo "PERMISO DE ENCENDER OK" || { echo "FALLO: $r"; exit 1; }
+            exit 0
+          fi
           objetivo=$(TZ=Europe/Madrid date -d "today 06:25" +%s)
           ahora=$(date +%s)
           if [ "$ahora" -gt $((objetivo + 3600*14)) ]; then
