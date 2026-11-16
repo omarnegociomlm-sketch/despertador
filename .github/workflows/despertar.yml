@@ -49,5 +49,6 @@ jobs:
           ya=$(gh run list -R "$REPO" -w publicar.yml -L 20 --json createdAt,event \
                -q "[.[] | select(.event==\"workflow_dispatch\" and .createdAt >= \"$hoy\")] | length")
           if [ "$ya" -gt 0 ]; then echo "Ya encendido hoy."; exit 0; fi
+          gh api -X PUT "repos/$REPO/actions/workflows/publicar.yml/enable"
           gh api -X POST "repos/$REPO/actions/workflows/publicar.yml/dispatches" -f ref=main
           echo "Programador encendido."
