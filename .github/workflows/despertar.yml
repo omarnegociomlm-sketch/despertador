@@ -1,16 +1,17 @@
 name: Despertar programador
 
-# Varios intentos de noche: el reloj de GitHub se retrasa o se salta disparos.
-# El primero que arranque espera hasta las 06:25 de Madrid y enciende el programador.
+# Reloj del programador de reels (repo público = minutos ilimitados, sin datos dentro).
+# De 06:25 a 21:05 (Madrid) enciende el programador privado cada 20 min; el programador
+# solo publica si a un reel ya le toca. Los disparos de noche son de reserva: el reloj de
+# GitHub se retrasa o se salta disparos. Cada tramo dura < 6 h y lanza el siguiente él solo.
 on:
   schedule:
     - cron: "0 0 * * *"
-    - cron: "0 1 * * *"
     - cron: "0 2 * * *"
-    - cron: "0 3 * * *"
-    - cron: "30 3 * * *"
     - cron: "0 4 * * *"
     - cron: "30 4 * * *"
+    - cron: "0 10 * * *"
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       prueba:
@@ -21,15 +22,20 @@ concurrency:
   group: despertar
   cancel-in-progress: false
 
+permissions:
+  actions: write
+
 jobs:
   despertar:
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - name: Esperar a las 06:25 de Madrid y encender
+      - name: Vigilar el día y encender el programador
         env:
           GH_TOKEN: ${{ secrets.PROGRAMADOR_TOKEN }}
+          SELF_TOKEN: ${{ github.token }}
           REPO: omarnegociomlm-sketch/ig-programador
+          SELF: ${{ github.repository }}
         run: |
           if [ "${{ github.event.inputs.prueba }}" = "si" ]; then
             gh run list -R "$REPO" -L 1 >/dev/null && echo "LECTURA OK"
@@ -37,18 +43,38 @@ jobs:
             echo "$r" | grep -q "No ref found" && echo "PERMISO DE ENCENDER OK" || { echo "FALLO: $r"; exit 1; }
             exit 0
           fi
-          objetivo=$(TZ=Europe/Madrid date -d "today 06:25" +%s)
+          inicio=$(date +%s)
+          limite=$((inicio + 345*60))
+          abre=$(TZ=Europe/Madrid date -d "today 06:25" +%s)
+          cierra=$(TZ=Europe/Madrid date -d "today 21:05" +%s)
           ahora=$(date +%s)
-          if [ "$ahora" -gt $((objetivo + 3600*14)) ]; then
-            objetivo=$(TZ=Europe/Madrid date -d "tomorrow 06:25" +%s)
+          if [ "$ahora" -ge "$cierra" ]; then
+            abre=$(TZ=Europe/Madrid date -d "tomorrow 06:25" +%s)
+            cierra=$(TZ=Europe/Madrid date -d "tomorrow 21:05" +%s)
           fi
-          espera=$((objetivo - ahora))
-          if [ "$espera" -gt 0 ]; then echo "Espero $espera s"; sleep "$espera"; fi
-          # Si ya se encendió hoy (otro intento), no repetir.
-          hoy=$(TZ=Europe/Madrid date -d "today 06:00" -u +%Y-%m-%dT%H:%M:%SZ)
-          ya=$(gh run list -R "$REPO" -w publicar.yml -L 20 --json createdAt,event \
-               -q "[.[] | select(.event==\"workflow_dispatch\" and .createdAt >= \"$hoy\")] | length")
-          if [ "$ya" -gt 0 ]; then echo "Ya encendido hoy."; exit 0; fi
-          gh api -X PUT "repos/$REPO/actions/workflows/publicar.yml/enable"
-          gh api -X POST "repos/$REPO/actions/workflows/publicar.yml/dispatches" -f ref=main
-          echo "Programador encendido."
+          while :; do
+            ahora=$(date +%s)
+            if [ "$ahora" -ge "$cierra" ]; then echo "Fin del día."; exit 0; fi
+            if [ "$ahora" -lt "$abre" ]; then
+              espera=$((abre - ahora))
+              if [ $((ahora + espera)) -gt "$limite" ]; then
+                echo "Las 06:25 quedan fuera de este tramo; lo cubre otro disparo."; exit 0
+              fi
+              echo "Espero $espera s hasta las 06:25"; sleep "$espera"; continue
+            fi
+            activos=$(gh run list -R "$REPO" -w publicar.yml -L 5 --json status \
+                      -q '[.[] | select(.status!="completed")] | length' || echo 0)
+            if [ "$activos" = "0" ]; then
+              gh api -X PUT "repos/$REPO/actions/workflows/publicar.yml/enable" || true
+              gh api -X POST "repos/$REPO/actions/workflows/publicar.yml/dispatches" -f ref=main \
+                && echo "$(TZ=Europe/Madrid date +%H:%M) programador encendido"
+            else
+              echo "$(TZ=Europe/Madrid date +%H:%M) el programador ya está en marcha"
+            fi
+            if [ $(( $(date +%s) + 1200 )) -gt "$limite" ]; then
+              echo "Tramo agotado: lanzo el siguiente."
+              GH_TOKEN="$SELF_TOKEN" gh workflow run despertar.yml -R "$SELF" --ref main
+              exit 0
+            fi
+            sleep 1200
+          done
